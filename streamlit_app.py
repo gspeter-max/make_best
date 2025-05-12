@@ -2,18 +2,21 @@ import streamlit as st
 import json
 import re
 import time
+# Import your model classes from your model1.py
+# Ensure model1.py is in the same directory or accessible via PYTHONPATH
 from model1 import (
     make_model1,
-    # make_model2, # You can uncomment and add to model_map if M1 has a distinct action for it
-    make_model3,
+    make_model2,
+    make_model3, # This is your Apex Code Synthesizer as per your model1.py
     make_model4,
-    make_model5,
-    make_model_ml_optimizer
+    make_model5
+    # Add make_model_ml_optimizer if you have it defined in your model1.py
+    # and model1 can route to it. For now, assuming the M1-M5 pipeline.
 )
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="GenAI Super Coder Pro",
+    page_title="GenAI Super Coder (User's Backend)",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -62,207 +65,237 @@ st.markdown("""
 # --- Model Initialization ---
 if 'models_initialized_flag' not in st.session_state: st.session_state.models_initialized_flag = False
 if not st.session_state.models_initialized_flag:
-    with st.spinner("Initializing AI Cores... This might take a moment for the first time."):
+    with st.spinner("Initializing AI Cores... This might take a moment."):
         try:
+            # These must match the class names in your model1.py
             st.session_state.model1_instance = make_model1()
-            st.session_state.model3_instance = make_model3()
+            st.session_state.model2_instance = make_model2()
+            st.session_state.model3_instance = make_model3() # Your Apex Synthesizer
             st.session_state.model4_instance = make_model4()
             st.session_state.model5_instance = make_model5()
-            st.session_state.model_ml_optimizer_instance = make_model_ml_optimizer()
+            # If you add make_model_ml_optimizer to your model1.py, initialize it here too
+            # st.session_state.model_ml_optimizer_instance = make_model_ml_optimizer()
             st.session_state.models_initialized_flag = True
             print("INFO (Streamlit): All AI models initialized successfully.")
         except RuntimeError as e:
             st.error(f"Fatal Error during AI Model Initialization: {e}")
-            st.error("Ensure GOOGLE_API_KEY is in 'api_key.env' (same dir as model1.py) or set as environment variable.")
-            st.session_state.models_initialized_flag = False # Set flag on error
+            st.error("Ensure GOOGLE_API_KEY is in 'api_key.env' or set as environment variable.")
+            st.session_state.models_initialized_flag = False
         except Exception as e:
             st.error(f"An unexpected fatal error during AI Model Initialization: {e}")
             import traceback; traceback.print_exc()
-            st.session_state.models_initialized_flag = False # Set flag on error
+            st.session_state.models_initialized_flag = False
 
 # --- Helper Function to Parse and Display AI's Multi-Part Response ---
-def display_ai_parts_from_string(full_response_string, container_to_write_in):
+def display_ai_parts_from_string(full_response_string, container_to_write_in, expected_model_output_style="unknown"):
+    """
+    Parses and displays structured AI responses based on expected style.
+    Returns a list of dicts representing the parts for history storage.
+    """
     if not full_response_string or not full_response_string.strip():
         return [{"type": "text", "data": "*AI provided no output or only whitespace for this part.*"}]
 
     displayed_parts_for_history = []
-    remaining_text = full_response_string.strip() 
+    remaining_text = full_response_string.strip()
 
-    json_match = re.search(r"```json\s*(\{.*?\})\s*```", remaining_text, re.DOTALL)
-    if json_match:
-        try:
-            json_data = json.loads(json_match.group(1))
-            displayed_parts_for_history.append({"type": "json", "data": json_data})
-            container_to_write_in.json(json_data)
-            remaining_text = remaining_text.replace(json_match.group(0), "", 1).strip()
-        except json.JSONDecodeError as e:
-            container_to_write_in.warning(f"AI Warning: Could not parse JSON block: {e}.")
+    if expected_model_output_style in ["model4_style", "model5_style"]: # Expect JSON report then MD code
+        json_match = re.search(r"```json\s*(\{.*?\})\s*```", remaining_text, re.DOTALL)
+        if json_match:
+            try:
+                json_data = json.loads(json_match.group(1))
+                displayed_parts_for_history.append({"type": "json", "data": json_data})
+                container_to_write_in.json(json_data)
+                remaining_text = remaining_text.replace(json_match.group(0), "", 1).strip()
+            except json.JSONDecodeError as e:
+                container_to_write_in.warning(f"AI Warning: Could not parse JSON block: {e}.")
 
-    code_match_md = re.search(r"```(\w*)\s*\n(.*?)\n```", remaining_text, re.DOTALL)
-    if code_match_md:
-        language = code_match_md.group(1).lower().strip() if code_match_md.group(1) else "plaintext"
-        code_content = code_match_md.group(2).strip()
-        displayed_parts_for_history.append({"type": "code", "data": {"language": language, "code": code_content}})
-        container_to_write_in.code(code_content, language=language)
-        remaining_text = remaining_text.replace(code_match_md.group(0), "", 1).strip()
-    
-    elif not json_match and remaining_text: 
-        is_likely_raw_code = remaining_text.startswith(("# Required Libraries & Setup:", "// Required Libraries & Setup:", "# Standard Library Only")) or \
-                             any(kw in remaining_text for kw in ["def ", "class ", "import ", "function ", "const ", "let "])
-        if is_likely_raw_code:
-            lang_guess = "python"
-            if "function " in remaining_text and "{" in remaining_text and not remaining_text.strip().startswith("def "): lang_guess = "javascript"
-            elif "public class" in remaining_text and "{" in remaining_text: lang_guess = "java"
-            
-            displayed_parts_for_history.append({"type": "code", "data": {"language": lang_guess, "code": remaining_text}})
-            container_to_write_in.code(remaining_text, language=lang_guess)
-            remaining_text = ""
+        code_match_md = re.search(r"```(\w*)\s*\n(.*?)\n```", remaining_text, re.DOTALL)
+        if code_match_md:
+            language = code_match_md.group(1).lower().strip() if code_match_md.group(1) else "plaintext"
+            code_content = code_match_md.group(2).strip()
+            displayed_parts_for_history.append({"type": "code", "data": {"language": language, "code": code_content}})
+            container_to_write_in.code(code_content, language=language)
+            remaining_text = remaining_text.replace(code_match_md.group(0), "", 1).strip()
 
+    elif expected_model_output_style == "model2_or_3_raw_code_style": # Expect raw setup comments + raw code
+        # This style is just text, possibly starting with comments
+        lang_guess = "python" # Default for raw code
+        if "function " in remaining_text and "{" in remaining_text and not remaining_text.strip().startswith("def "): lang_guess = "javascript"
+        elif "public class" in remaining_text and "{" in remaining_text: lang_guess = "java"
+        
+        displayed_parts_for_history.append({"type": "code", "data": {"language": lang_guess, "code": remaining_text}})
+        container_to_write_in.code(remaining_text, language=lang_guess)
+        remaining_text = "" # Assume all was code
+
+    # Display any text that remains as markdown (e.g., if parsing failed or it's simple text)
     if remaining_text.strip():
         displayed_parts_for_history.append({"type": "text", "data": remaining_text})
         container_to_write_in.markdown(remaining_text)
-        
+    
     if not displayed_parts_for_history and (full_response_string and full_response_string.strip()):
          displayed_parts_for_history.append({"type": "text", "data": full_response_string})
     return displayed_parts_for_history
 
+
 # --- Streamlit UI Title ---
-st.title("✨ GenAI Super Coder ✨")
+st.title("✨ GenAI Super Coder (User Backend Ver.) ✨")
 
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content_parts": [{"type": "text", "data": "Hello! I'm your AI Super Coder. How can I assist with your coding or machine learning projects today?"}]}
+        {"role": "assistant", "content_parts": [{"type": "text", "data": "Hello! I'm your AI Super Coder. How can I assist you today?"}]}
     ]
 
-# Display chat messages from history
-# This runs on every Streamlit script rerun, so it keeps the chat visible
 for msg_data in st.session_state.messages:
     with st.chat_message(msg_data["role"]):
         if "content_parts" in msg_data:
             for part_idx, part in enumerate(msg_data["content_parts"]):
-                # Add separator only between multiple rich parts from assistant
                 if part_idx > 0 and msg_data["role"] == "assistant" and \
-                   (part["type"] == "json" or part["type"] == "code" or \
-                    (displayed_parts_for_history[part_idx-1]["type"] == "json" or displayed_parts_for_history[part_idx-1]["type"] == "code" )):
+                   ( (part["type"] == "json" or part["type"] == "code") or \
+                     (msg_data["content_parts"][part_idx-1]["type"] == "json" or \
+                      msg_data["content_parts"][part_idx-1]["type"] == "code") ):
                     st.markdown("---") 
-                
                 if part["type"] == "text": st.markdown(part["data"])
                 elif part["type"] == "json": st.json(part["data"])
                 elif part["type"] == "code": st.code(part["data"]["code"], language=part["data"]["language"])
-        elif "content" in msg_data: # Fallback for old simple string content, less ideal
-            st.markdown(msg_data["content"])
+        elif "content" in msg_data: st.markdown(msg_data["content"])
 
 
-# --- Main Chat Input Logic ---
-# This block only runs when the user submits new input
 if user_input := st.chat_input("Describe your coding task or ask a question..."):
     if not st.session_state.get("models_initialized_flag", False):
-        st.error("AI Models are not ready. Please check startup messages or console logs. Cannot process input.")
+        st.error("AI Models are not ready. Please check startup messages or console logs.")
     else:
-        # Add user message to UI history immediately and display it
         st.session_state.messages.append({"role": "user", "content_parts": [{"type": "text", "data": user_input}]})
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        # Prepare for assistant's response
         with st.chat_message("assistant"):
-            # This container will hold all output for THIS assistant turn
-            current_assistant_turn_output_container = st.container() 
-            thinking_placeholder = current_assistant_turn_output_container.empty()
-            thinking_placeholder.markdown("<p class='thinking-placeholder'>🧠 Orchestrating AI response...</p>", unsafe_allow_html=True)
+            current_assistant_turn_container = st.container()
+            thinking_placeholder = current_assistant_turn_container.empty()
+            thinking_placeholder.markdown("<p class='thinking-placeholder'>🧠 Orchestrating (Model 1)...</p>", unsafe_allow_html=True)
 
             accumulated_final_parts_for_history_this_turn = []
 
             try:
-                # 1. Call Model1 (Orchestrator)
-                model1_output_dict = st.session_state.model1_instance(user_input, st.session_state.messages)
+                # Model1's __call__ expects just the current prompt; it uses its internal chat_session
+                # but we pass the UI history for its context construction if it's designed to use it.
+                # YOUR model1.py __call__ takes user_prompt and optionally ui_chat_history_for_context.
+                model1_raw_text_output = st.session_state.model1_instance(user_input, st.session_state.messages) # Pass UI history for context
 
-                if not isinstance(model1_output_dict, dict):
-                    raise ValueError(f"Model1 (Orchestrator) did not return a dictionary as expected. Received: {type(model1_output_dict)}. Output: {model1_output_dict}")
+                # Parse Model1's output (YOUR model1.py __call__ returns raw text, not dict)
+                model1_output_json = None
+                json_str_match_m1 = re.search(r"```json\s*(\{.*?\})\s*```", model1_raw_text_output, re.DOTALL)
+                if json_str_match_m1:
+                    try:
+                        model1_output_json = json.loads(json_str_match_m1.group(1))
+                    except json.JSONDecodeError as e:
+                        current_assistant_turn_container.error(f"M1 JSON Error: {e}. Raw: {json_str_match_m1.group(1)}")
+                else: # Try parsing as raw JSON if no markdown wrapper
+                    try:
+                        model1_output_json = json.loads(model1_raw_text_output.strip())
+                    except json.JSONDecodeError as e:
+                         current_assistant_turn_container.error(f"M1 Output Error: Not valid JSON. Raw: {model1_raw_text_output}")
+                
+                if not model1_output_json: # If parsing failed completely
+                    model1_output_json = { # Fallback
+                        "is_code_related": False,
+                        "response_for_user": "I had trouble understanding the request structure from Model 1."
+                    }
 
-                is_code_related = model1_output_dict.get("is_code_related", False)
-                user_ack_from_model1 = model1_output_dict.get("user_facing_acknowledgement", "")
-                action_for_next = model1_output_dict.get("action_for_next_model")
-                prompt_for_next = model1_output_dict.get("prompt_for_next_model")
-                # lib_constraints = model1_output_dict.get("library_constraints_for_next_model") # Available if needed
+
+                is_code_related = model1_output_json.get("is_code_related", False)
+                user_ack_from_model1 = model1_output_json.get("response_for_user", "") # Changed from user_facing_acknowledgement
+                prompt_for_next = model1_output_json.get("prompt_for_model2", "") # Using your M1's key
 
                 initial_ack_displayed_in_turn = False
                 if user_ack_from_model1 and user_ack_from_model1.strip():
-                    # Display M1 ack immediately if it's substantial, within the turn's container
-                    current_assistant_turn_output_container.markdown(user_ack_from_model1)
                     accumulated_final_parts_for_history_this_turn.append({"type": "text", "data": user_ack_from_model1})
+                    current_assistant_turn_container.markdown(user_ack_from_model1)
                     initial_ack_displayed_in_turn = True
-                    
-                    # Update thinking placeholder based on whether it's a simple chat or a complex task
-                    if is_code_related and action_for_next:
-                        thinking_placeholder.markdown(f"<p class='thinking-placeholder'>{user_ack_from_model1} Engaging specialized AI...</p>", unsafe_allow_html=True)
-                    else: # Simple chat, M1's ack is the full response
-                        thinking_placeholder.empty() 
-                
-                # If it's a code-related task, proceed to specialized models
-                if is_code_related and action_for_next and prompt_for_next:
-                    if initial_ack_displayed_in_turn: # Add a separator if M1 already wrote something
-                        current_assistant_turn_output_container.markdown("---")
-
-                    model_map = {
-                        # "generate_code_m2_simple": (st.session_state.model2_instance, "Generating Draft Code (Model 2)..."), # If you distinguish M2
-                        "generate_new_code_m3": (st.session_state.model3_instance, "Synthesizing High-Quality Code (Model 3)..."),
-                        "fix_and_verify_code_m4": (st.session_state.model4_instance, "Diagnosing & Correcting Code (Model 4)..."),
-                        "iteratively_perfect_code_m5": (st.session_state.model5_instance, "Iteratively Perfecting Code (Model 5)..."),
-                        "optimize_ml_solution_m_ml": (st.session_state.model_ml_optimizer_instance, "Engineering Optimal ML Solution..."),
-                    }
-
-                    if action_for_next in model_map:
-                        target_model_instance, progress_message_template = model_map[action_for_next]
-                        
-                        stream_accumulator = []
-                        # Stream display area is now INSIDE current_assistant_turn_container, after any M1 ack.
-                        stream_display_area = current_assistant_turn_container.empty() 
-
-                        # Update thinking placeholder (which is also in current_assistant_turn_container but will be cleared)
-                        thinking_placeholder.markdown(f"<p class='thinking-placeholder'>{progress_message_template} Streaming output...</p>", unsafe_allow_html=True)
-                        
-                        for chunk_idx, chunk_text in enumerate(target_model_instance(prompt_for_next)):
-                            stream_accumulator.append(chunk_text)
-                            if chunk_idx % 2 == 0 or len(chunk_text) > 5 : # Update UI less frequently for smoother stream
-                                stream_display_area.markdown("".join(stream_accumulator) + " ▌") # Simulate cursor
-                        
-                        stream_display_area.empty() # Clear the temporary streaming display
-                        thinking_placeholder.empty() # Clear "Thinking..." or progress text
-                        
-                        final_output_string_from_specialized_model = "".join(stream_accumulator)
-                        
-                        # Parse and display the complete final output in the main container for this turn
-                        parsed_parts = display_ai_parts_from_string(final_output_string_from_specialized_model, current_assistant_turn_container)
-                        accumulated_final_parts_for_history_this_turn.extend(parsed_parts)
+                    thinking_placeholder_text = user_ack_from_model1 if len(user_ack_from_model1.strip()) < 50 else "Processing..."
+                    if is_code_related:
+                        thinking_placeholder.markdown(f"<p class='thinking-placeholder'>{thinking_placeholder_text} Engaging specialized AI pipeline...</p>", unsafe_allow_html=True)
                     else:
-                        msg = f"Orchestrator (Model 1) requested an unhandled action: '{action_for_next}'."
-                        current_assistant_turn_container.warning(msg) # Display warning in the turn's container
-                        accumulated_final_parts_for_history_this_turn.append({"type": "text", "data": msg})
-                
-                # Case: Model1 determined not code related, but its initial ack was empty.
-                elif not is_code_related and not user_ack_from_model1.strip():
-                    fallback_msg = "I'm ready to help. What can I do for you?"
-                    current_assistant_turn_container.markdown(fallback_msg) # Display in the turn's container
-                    accumulated_final_parts_for_history_this_turn.append({"type": "text", "data": fallback_msg})
+                        thinking_placeholder.empty()
+
+                if is_code_related and prompt_for_next and prompt_for_next.strip():
+                    if initial_ack_displayed_in_turn: current_assistant_turn_container.markdown("---")
+                    
+                    # --- EXECUTE YOUR FIXED M2->M3->M4->M5 PIPELINE ---
+                    pipeline_output_accumulator = []
+                    pipeline_stream_display_area = current_assistant_turn_container.empty()
+                    
+                    current_data_for_next_model = prompt_for_next
+
+                    # Stage 2: Model 2
+                    thinking_placeholder.markdown("<p class='thinking-placeholder'>Pipeline Stage: Generating Code (Model 2)...</p>", unsafe_allow_html=True)
+                    temp_accumulator_m2 = []
+                    for chunk in st.session_state.model2_instance(current_data_for_next_model):
+                        temp_accumulator_m2.append(chunk)
+                        pipeline_stream_display_area.markdown("".join(temp_accumulator_m2) + " ▌")
+                    current_data_for_next_model = "".join(temp_accumulator_m2) # Output of M2
+                    pipeline_stream_display_area.empty() # Clear for next stage's stream
+
+                    # Stage 3: Model 3 (Apex - refines M2 output)
+                    thinking_placeholder.markdown("<p class='thinking-placeholder'>Pipeline Stage: Refining Code (Model 3)...</p>", unsafe_allow_html=True)
+                    prompt_for_m3 = f"<CodeToRefine language='python'>\n{current_data_for_next_model}\n</CodeToRefine>\n<TaskGoal>Refine this code to Apex standards: raw output, setup instructions, peak quality.</TaskGoal>"
+                    temp_accumulator_m3 = []
+                    for chunk in st.session_state.model3_instance(prompt_for_m3):
+                        temp_accumulator_m3.append(chunk)
+                        pipeline_stream_display_area.markdown("".join(temp_accumulator_m3) + " ▌")
+                    current_data_for_next_model = "".join(temp_accumulator_m3) # Output of M3
+                    pipeline_stream_display_area.empty()
+
+                    # Stage 4: Model 4 (Physician - takes M3 output)
+                    thinking_placeholder.markdown("<p class='thinking-placeholder'>Pipeline Stage: Diagnosing & Correcting (Model 4)...</p>", unsafe_allow_html=True)
+                    prompt_for_m4 = f"<CodeToFix language='python'>\n{current_data_for_next_model}\n</CodeToFix>\n<RequestDetails>Diagnose, fix, and verify this code. Adhere to any implicit library constraints. Output JSON report then corrected code block.</RequestDetails>"
+                    temp_accumulator_m4 = []
+                    for chunk in st.session_state.model4_instance(prompt_for_m4):
+                        temp_accumulator_m4.append(chunk)
+                        pipeline_stream_display_area.markdown("".join(temp_accumulator_m4) + " ▌")
+                    current_data_for_next_model = "".join(temp_accumulator_m4) # Output of M4 (JSON + MD Code)
+                    pipeline_stream_display_area.empty()
+
+                    # Stage 5: Model 5 (Iterative Refiner - takes code part of M4 output)
+                    thinking_placeholder.markdown("<p class='thinking-placeholder'>Pipeline Stage: Iteratively Perfecting (Model 5)...</p>", unsafe_allow_html=True)
+                    code_to_perfect_match_m5 = re.search(r"```python\s*\n(.*?)\n```", current_data_for_next_model, re.DOTALL)
+                    if code_to_perfect_match_m5:
+                        code_for_m5 = code_to_perfect_match_m5.group(1).strip()
+                        prompt_for_m5 = f"<CodeToPerfect language='python'>\n```python\n{code_for_m5}\n```\n</CodeToPerfect>\n<TaskGoal>Iteratively perfect this code until it's 100% runnable and functionally complete. Output JSON log then final code block.</TaskGoal>\n<MaxIterations>5</MaxIterations>" # MaxIterations can be configurable
+                        temp_accumulator_m5 = []
+                        for chunk in st.session_state.model5_instance(prompt_for_m5):
+                            temp_accumulator_m5.append(chunk)
+                            pipeline_stream_display_area.markdown("".join(temp_accumulator_m5) + " ▌")
+                        final_pipeline_output_string = "".join(temp_accumulator_m5) # Output of M5
+                    else:
+                        final_pipeline_output_string = "Error: Could not extract code from Model 4 to feed Model 5.\nShowing Model 4 output instead:\n" + current_data_for_next_model
+                    
+                    pipeline_stream_display_area.empty()
                     thinking_placeholder.empty()
+                        
+                    # Parse and display the FINAL output of the pipeline (from Model 5 or Model 4 if M5 had issues)
+                    # Model 4 and 5 output style is JSON then MD code block
+                    parsed_pipeline_parts = display_ai_parts_from_string(final_pipeline_output_string, current_assistant_turn_container, expected_model_output_style="model4_style") # or model5_style
+                    accumulated_final_parts_for_history_this_turn.extend(parsed_pipeline_parts)
+
+                elif not is_code_related and not user_ack_from_model1.strip():
+                    fallback_msg = "I'm ready to assist. What can I do for you?"
+                    current_assistant_turn_container.markdown(fallback_msg)
+                    accumulated_final_parts_for_history_this_turn.append({"type": "text", "data": fallback_msg})
                 
-                # If M1 gave an ack for a simple chat, and no further action, make sure placeholder is cleared.
-                if not (is_code_related and action_for_next and prompt_for_next):
+                if not (is_code_related and prompt_for_next and prompt_for_next.strip()): # If it was a simple chat
                     thinking_placeholder.empty()
 
 
             except Exception as e:
-                thinking_placeholder.empty() # Clear any thinking message
+                thinking_placeholder.empty()
                 error_msg = f"An unexpected error occurred processing your request: {e}"
-                current_assistant_turn_container.error(error_msg) # Display error in the chat bubble
+                current_assistant_turn_container.error(error_msg)
                 accumulated_final_parts_for_history_this_turn.append({"type": "text", "data": f"Sorry, I encountered an error: {e}"})
-                import traceback; traceback.print_exc() # To console for dev
+                import traceback; traceback.print_exc()
 
         # Add final assistant response parts to session state for durable display
         if accumulated_final_parts_for_history_this_turn:
             st.session_state.messages.append({"role": "assistant", "content_parts": accumulated_final_parts_for_history_this_turn})
-        # This covers the case where M1 gave a simple ack, it was displayed, but nothing was added to accumulated_final_parts_for_history_this_turn
-        # because it was handled by the initial M1 ack display.
+        # If M1 only gave an ack for a non-code task, and nothing else was added.
         elif not accumulated_final_parts_for_history_this_turn and user_ack_from_model1 and not is_code_related:
              st.session_state.messages.append({"role": "assistant", "content_parts": [{"type": "text", "data": user_ack_from_model1}]})
